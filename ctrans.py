@@ -17,7 +17,7 @@
 # set path to credentials:
 #   $env:GOOGLE_APPLICATION_CREDENTIALS="B:\AWI\Python\ctrans\Python Translate-50994b9b6934.json"
 
-# pip install chardet multiprocessing simplejson google-cloud-translate
+# pip install chardet simplejson google-cloud-translate
 
 import chardet
 import codecs
@@ -44,6 +44,7 @@ ext         = '.'+lang                             # extension of translated
                                                     # files
 num_procs   =   32                                  # number of concurrent
                                                     # processes
+
                                                     
 # coding vars                                                    
 encodeas    = 'utf-8'                               # input file type
@@ -52,6 +53,7 @@ cerr        = 'strict'                              # what do with codec errors
 autodetect  = True                                 # autodetect file encoding
 transalate_string_literals = False
 keep_original_text = False
+
 
 
 def get_splits(text, splitLength = 4500):
@@ -93,6 +95,7 @@ def translate(text, target = None, source = lang_src):
             except:
                     retText += text.decode('')
             if trace: print '\treceived!'
+
     return retText
 
 ### start kyle's code ###
@@ -108,8 +111,6 @@ def trans_block_comment(comment):
     trans = trans.split('\n')
     # trans.split('\n') left '\r' in windows
     trans   = [ line.replace('\r', '') for line in trans ]
-
-    print trans
     
     # translate each line and compensate for the fact that gtrans eats your
     # formatting
@@ -353,22 +354,22 @@ def scan_dir(dirname):
     while True:
         try:
             scan_t = scanner.next()   # scan_t: (dirp, dirs, files)
-            print scan_t
         except StopIteration:
             break
         else:
             for f in scan_t[2]:
                 file_list.append(os.path.join(scan_t[0], f))
 
-    print file_list
-
     scan_list   = [ file for file in file_list
                     if has_extensions(file) ]
     
     dev = 1
 
-    for filename in scan_list:
-        scan_file(filename)
+    if num_procs > 1:
+        pool.map(scan_file, scan_list)
+    else:
+        for filename in scan_list:
+            scan_file(filename)
 
     pool.close()
     pool.join()
