@@ -17,6 +17,7 @@
 # set path to credentials:
 #   $env:GOOGLE_APPLICATION_CREDENTIALS="B:\AWI\Python\ctrans\Python Translate-50994b9b6934.json"
 
+# pip install chardet multiprocessing simplejson google-cloud-translate
 
 import chardet
 import codecs
@@ -31,7 +32,6 @@ import simplejson
 from google.cloud import translate_v2 as G_translate
 translate_client = G_translate.Client()
 
-
 ### globals ###
  
 # variables from halotis' code
@@ -40,7 +40,7 @@ lang_src    = ''    #Source Language, leave empty for auto-detect
 
 # misc vars
 trace       = False                                 # enable debugging output
-ext         = '.en'                                 # extension of translated
+ext         = '.'+lang                             # extension of translated
                                                     # files
 num_procs   =   32                                  # number of concurrent
                                                     # processes
@@ -50,17 +50,10 @@ encodeas    = 'utf-8'                               # input file type
 decodeas    = 'utf-8'                               # output file type
 cerr        = 'strict'                              # what do with codec errors
 autodetect  = True                                 # autodetect file encoding
+transalate_string_literals = False
+keep_original_text = False
 
-# regexes for the different comment types
-scrub_bcomments = re.compile(r'/\*([\s\S]+?)\*/', re.M & re.U)
-scrub_lcomments = re.compile(r'//(.+)', re.U & re.M)
-scrub_scomments = re.compile(r'#\s*(.+)', re.U & re.M)
 
-# extensions for valid source files
-source_exts     = { 'c-style':[ 'c', 'cpp', 'cc', 'h', 'hpp' ],
-                    'script': [ 'py', 'pl', 'rb' ] }
-
- 
 def get_splits(text, splitLength = 4500):
     """
     Translate Api has a limit on length of text(4500 characters) that can be
@@ -71,10 +64,15 @@ def get_splits(text, splitLength = 4500):
             for index in xrange(0, len(text), splitLength))
  
 
-def translate(text, target = lang, source = lang_src):
+def translate(text, target = None, source = lang_src):
     """
     Translate using Googles API
     """
+
+    global lang
+
+    if target is None:
+        target = lang
 
     retText = ''
     
@@ -84,9 +82,14 @@ def translate(text, target = lang, source = lang_src):
             
             resp = translate_client.translate(
                 text, target_language=target, source_language=source)
-            
+
+            text = text.rstrip('\r\n')
+
             try:
-                    retText += resp['translatedText']
+                    if text != resp['translatedText'] and keep_original_text:
+                        retText += text+'('+resp['translatedText']+')'
+                    else:
+                        retText += resp['translatedText']
             except:
                     retText += text.decode('')
             if trace: print '\treceived!'
@@ -100,15 +103,20 @@ def translate(text, target = lang, source = lang_src):
 def trans_block_comment(comment):
     # comment should be arrive as a re.Match object, need to grab the group
     trans = unicode(comment.group())
+    trans   = trans.lstrip('/*')
+    trans   = trans.rstrip('*/')
     trans = trans.split('\n')
+    # trans.split('\n') left '\r' in windows
+    trans   = [ line.replace('\r', '') for line in trans ]
+
+    print trans
     
     # translate each line and compensate for the fact that gtrans eats your
     # formatting
     trans   = [ translate(line) for line in trans ]
-    trans   = [ line.replace('/ * ', '/* ') for line in trans ]
-    trans   = [ line.replace(' * /', ' */') for line in trans ]
     comment = u'\n'.join(trans)
-    
+    comment = u'/*%s*/' % comment
+
     # here's your stupid translation    
     return comment
 
@@ -137,6 +145,83 @@ def trans_scripting_comment(comment):
     
     return comment
 
+# handle an initial '#', like in perl or python or your mom
+def trans_lua_comment(comment):
+    trans   = unicode(comment.group())
+    
+    trans   = trans.lstrip('--')
+    trans   = translate(trans.strip())
+    comment = '-- %s' % trans
+    
+    return comment
+
+# handles "\w+"" string literals
+def trans_block_string_literals(comment):
+    # comment should be arrive as a re.Match object, need to grab the group
+    trans = unicode(comment.group())
+    trans   = trans.lstrip('"')
+    trans   = trans.rstrip('"')
+
+    trans = trans.split('\n')
+    trans   = [ line.replace('\r', '') for line in trans ]
+
+    # translate each line and compensate for the fact that gtrans eats your
+    # formatting
+    trans   = [ translate(line) for line in trans ]
+
+    comment = u'\n'.join(trans)
+    comment = u'"%s"' % comment
+    
+    # here's your stupid translation    
+    return comment
+
+# extensions for valid source files
+source_exts     = { 
+    'c-style':[ 'c', 'cpp', 'cc', 'h', 'hpp', 'js', 'ts' ],
+    'script': [ 'py', 'pl', 'rb' ],
+    'lua': ['lua']
+}
+
+# regex and process functions for each extensions
+regex_comments = {
+    'c-style': [
+        { # string literals
+            'string_literal': True,
+            'regex': re.compile(r'"([\s\S]*?)"', re.M & re.U),
+            'handler' : trans_block_string_literals
+        },
+        { # /*  */ comments
+            'regex': re.compile(r'/\*([\s\S]*?)\*/', re.M & re.U),
+            'handler' : trans_block_comment
+        },
+        { # // comments
+            'regex': re.compile(r'//(.+)', re.U & re.M),
+            'handler' : trans_line_comment
+        }
+    ],
+    'script': [
+        { # string literals
+            'string_literal': True,
+            'regex': re.compile(r'"([\s\S]*?)"', re.M & re.U),
+            'handler' : trans_block_string_literals
+        },
+        { # # comments
+            'regex': re.compile(r'#\s*(.+)', re.U & re.M),
+            'handler' : trans_scripting_comment
+        }
+    ],
+    'lua': [
+        { # string literals
+            'string_literal': True,
+            'regex': re.compile(r'"([\s\S]*?)"', re.M & re.U),
+            'handler' : trans_block_string_literals
+        },
+        { # -- comments
+            'regex': re.compile(r'\-\-\s*(.+)', re.U & re.M),
+            'handler' : trans_lua_comment
+        }
+    ]
+}
 
 ### processing code ###
 # the following functions handle regexes, file tree walking and file I/O
@@ -195,8 +280,8 @@ def guess_dir(dir):
             break
         else:
             codec_scan.extend([ os.path.join(dirp, file) for file in files
-                                if is_source(os.path.join(dirp, file))
-                                or is_script(os.path.join(dirp, file)) ])
+                                if has_extensions(os.path.join(dirp, file))])
+
     for file in codec_scan:
         guess = guess_encoding(file, return_dict=True)
         encoding, confidence = guess['encoding'], guess['confidence']
@@ -238,14 +323,15 @@ def scan_file(filename):
         print '[!] error on file %s, skipping...' % filename
         print '\t(error returned was %s)' % str(e)
         return None
-    
+
     if not ucode: return None
 
-    if   is_source(filename):
-        tcode       = scrub_bcomments.sub(trans_block_comment, ucode)
-        tcode       = scrub_lcomments.sub(trans_line_comment,  tcode)
-    elif is_script(filename):
-        tcode       = scrub_scomments.sub(trans_scripting_comment, ucode)
+    regexs = get_regexs_by_extensions(filename)
+
+    tcode = ucode
+    for t in regexs:
+        if transalate_string_literals is False and 'string_literal' in t and t['string_literal'] is True: continue
+        tcode       = t['regex'].sub(t['handler'], tcode)
     
     writer.write(tcode)
     
@@ -267,38 +353,48 @@ def scan_dir(dirname):
     while True:
         try:
             scan_t = scanner.next()   # scan_t: (dirp, dirs, files)
+            print scan_t
         except StopIteration:
             break
         else:
             for f in scan_t[2]:
                 file_list.append(os.path.join(scan_t[0], f))
-                
-    scan_list   = [ os.path.join(scan_t[0], file) for file in file_list
-                    if is_source(file) or is_script(file) ]
+
+    print file_list
+
+    scan_list   = [ file for file in file_list
+                    if has_extensions(file) ]
     
     dev = 1
 
-    pool.map(scan_file, scan_list)
+    for filename in scan_list:
+        scan_file(filename)
+
     pool.close()
     pool.join()
-        
-# detect c-style comments
-def is_source(filename):
-    extension   = re.sub('^.+\\.(\\w+)$', '\\1', filename)
-    if extension in source_exts['c-style']: return True
-    
-    return False
 
-# detect script-style comments
-def is_script(filename):
+
+def has_extensions(filename):
     extension   = re.sub('^.+\\.(\\w+)$', '\\1', filename)
-    if extension in source_exts['script']: return True
-    
-    return False
+    for key, value in source_exts.iteritems():
+        if extension in value: return True
+
+# get regex, processor sets by extensions 
+def get_regexs_by_extensions(filename):
+    extension   = re.sub('^.+\\.(\\w+)$', '\\1', filename)
+    for key, value in source_exts.iteritems():
+        if extension in value: return regex_comments[key]
+
+# set target language and generated file extentions for it
+def set_lang(lang_code):
+    print 'language: ' + lang_code
+    lang = lang_code
+    ext = '.'+lang
 
 ##### start main code #####
 if __name__ == '__main__':
-    (opts, args)    = getopt.getopt(sys.argv[1:], 's:d:e:o:t')
+    (opts, args)    = getopt.getopt(sys.argv[1:], 's:d:e:o:t', 
+                ['lang=', 'keep_source', 'string_literals'])
     dir_mode        = False
     target          = None
     
@@ -316,12 +412,14 @@ if __name__ == '__main__':
                 autodetect = True
         if opt == '-o':
             decodeas = arg
-            
+        if opt == '--keep_source':
+            keep_original_text = True
+        if opt == '--string_literals':
+            transalate_string_literals = True
+        if opt == '--lang':
+            set_lang(arg)
     
     if dir_mode:
         scan_dir(target)
     else:
         scan_file(target)
-            
-    
-    

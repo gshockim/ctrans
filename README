@@ -8,6 +8,17 @@ comments formatted as '### comment' will still end up as '# comment', this
 is a bug i don't care about fixing atm; i'm more concerned with just getting
 this working.
 
+PREREQUISITE
+
+    Setup Cloud Console project and download credentials
+        https://cloud.google.com/translate/docs/basic/setup-basic
+    Set path to credentials:
+    GOOGLE_APPLICATION_CREDENTIALS={path_to_credential}
+
+
+    Install packages
+
+        pip install chardet simplejson google-cloud-translate
 
 USAGE:
     ctrans.py -s <filename>
@@ -17,9 +28,21 @@ USAGE:
     translates all source files in a directory
     
     other flags:
-        -e      set input file encoding
-        -o      set output file encoding
-        -t      set trace (debugging output)
+        -e                  set input file encoding
+        -o                  set output file encoding
+        -t                  set trace (debugging output)
+        -b                  write with original text
+        --keep_source       keep source texts
+        --string_literals   translate string literals
+        --lang={langid} set target lanauge (default: en)
+
+SUPPORTED
+    c-styles
+        .c, .cpp, .cc, .h. hpp, .js, .ts
+    lua
+        .lua
+    scripts
+        .py, .pl, .rb
 
 
 DECODE/ENCODE NOTES:
